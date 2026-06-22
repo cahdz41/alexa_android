@@ -24,13 +24,22 @@
     <!-- Keep service alive during Doze -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
+    <!-- Bring app to foreground on wake word (like phone calls) -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
     <!-- Wake lock for alarm sounds -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <queries>
+        <package android:name="com.spotify.music" />
+        <package android:name="com.google.android.youtube" />
+    </queries>
 
     <application
         android:name=".AlexaApp"
         android:allowBackup="true"
-        android:icon="@mipmap/ic_launcher"
+        android:icon="@drawable/ic_mic"
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.AlexaAssistant"
@@ -39,6 +48,9 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTask"
+            android:showOnLockScreen="true"
+            android:turnScreenOn="true"
             android:theme="@style/Theme.AlexaAssistant">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -49,6 +61,7 @@
         <service
             android:name=".service.WakeWordService"
             android:foregroundServiceType="microphone"
+            android:stopWithTask="false"
             android:exported="false" />
 
         <receiver

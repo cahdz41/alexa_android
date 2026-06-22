@@ -9,6 +9,7 @@ class AlexaApp : Application() {
 
     companion object {
         const val CHANNEL_LISTENING = "wake_word_listening"
+        const val CHANNEL_SESSION = "session_active"
         const val CHANNEL_ALARMS = "alarms"
     }
 
@@ -28,6 +29,16 @@ class AlexaApp : Application() {
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
                 description = "Muestra cuando Alexa está escuchando el wake word"
+            }
+        )
+
+        manager.createNotificationChannel(
+            NotificationChannel(
+                CHANNEL_SESSION,
+                "Sesión activa",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Alerta cuando Alexa detecta el wake word"
             }
         )
 

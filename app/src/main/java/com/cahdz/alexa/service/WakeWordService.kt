@@ -78,24 +78,53 @@ class WakeWordService : Service() {
 
         Log.i(TAG, "Wake word detected — starting Gemini session")
         _state.value = AssistantState.SESSION_ACTIVE
-        updateNotification("Sesión activa — hablando con Gemini")
 
+        bringAppToForeground()
         detector?.stop()
 
         scope.launch {
             try {
-                geminiSession = GeminiLiveSession(this@WakeWordService)
+                geminiSession = GeminiLiveSession(this@WakeWordService) { event ->
+                    Log.d(TAG, "Session event: $event")
+                }
                 geminiSession?.run()
             } catch (e: Exception) {
                 Log.e(TAG, "Gemini session error", e)
             } finally {
                 geminiSession = null
                 _state.value = AssistantState.LISTENING
-                updateNotification("Escuchando...")
+                restoreListeningNotification()
                 detector?.start(scope)
                 Log.i(TAG, "Session ended — listening again")
             }
         }
+    }
+
+    private fun bringAppToForeground() {
+        val launchIntent = Intent(this, MainActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+        }
+        val fullScreenPi = PendingIntent.getActivity(
+            this, 2, launchIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+
+        val notification = NotificationCompat.Builder(this, AlexaApp.CHANNEL_SESSION)
+            .setContentTitle("Alexa Assistant")
+            .setContentText("Sesión activa — habla ahora")
+            .setSmallIcon(R.drawable.ic_mic)
+            .setFullScreenIntent(fullScreenPi, true)
+            .setCategory(NotificationCompat.CATEGORY_CALL)
+            .setOngoing(true)
+            .build()
+
+        val manager = getSystemService(android.app.NotificationManager::class.java)
+        manager.notify(NOTIFICATION_ID, notification)
+    }
+
+    private fun restoreListeningNotification() {
+        val manager = getSystemService(android.app.NotificationManager::class.java)
+        manager.notify(NOTIFICATION_ID, buildNotification("Escuchando..."))
     }
 
     private fun buildNotification(text: String): Notification {
@@ -128,9 +157,7 @@ class WakeWordService : Service() {
 
     override fun onDestroy() {
         detector?.stop()
-        scope.launch {
-            geminiSession?.stop()
-        }
+        geminiSession?.stop()
         scope.cancel()
         _state.value = AssistantState.IDLE
         Log.i(TAG, "Wake word service destroyed")

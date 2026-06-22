@@ -1,14 +1,15 @@
 [versions]
-agp = "8.7.3"
+agp = "8.13.2"
 kotlin = "2.1.0"
 core-ktx = "1.15.0"
 lifecycle = "2.8.7"
 activity-compose = "1.9.3"
 compose-bom = "2024.12.01"
 coroutines = "1.9.0"
-firebase-bom = "33.7.0"
+serialization = "1.7.3"
+firebase-bom = "34.15.0"
 firebase-ai = "16.0.0"
-google-services = "4.4.2"
+google-services = "4.5.0"
 onnxruntime = "1.18.0"
 openwakeword = "0.1.5"
 datastore = "1.1.1"
@@ -34,8 +35,10 @@ compose-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
 
 firebase-bom = { group = "com.google.firebase", name = "firebase-bom", version.ref = "firebase-bom" }
 firebase-ai = { group = "com.google.firebase", name = "firebase-ai", version.ref = "firebase-ai" }
+firebase-analytics = { group = "com.google.firebase", name = "firebase-analytics" }
 
 kotlinx-coroutines = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
+kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "serialization" }
 onnxruntime = { group = "com.microsoft.onnxruntime", name = "onnxruntime-android", version.ref = "onnxruntime" }
 openwakeword = { group = "xyz.rementia", name = "openwakeword", version.ref = "openwakeword" }
 gson = { group = "com.google.code.gson", name = "gson", version.ref = "gson" }
@@ -44,4 +47,5 @@ gson = { group = "com.google.code.gson", name = "gson", version.ref = "gson" }
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 google-services = { id = "com.google.gms.google-services", version.ref = "google-services" }

@@ -2,6 +2,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.google.services)
 }
 
@@ -16,7 +17,7 @@ android {
         versionCode = 1
         versionName = "1.0.0"
 
-        buildConfigField("String", "GEMINI_MODEL", "\"gemini-2.5-flash-native-audio-preview-12-2025\"")
+        buildConfigField("String", "GEMINI_MODEL", "\"gemini-3.1-flash-live-preview\"")
     }
 
     buildTypes {
@@ -65,14 +66,16 @@ dependencies {
 
     // Firebase / Gemini
     implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.analytics)
     implementation(libs.firebase.ai)
 
     // Wake word
     implementation(libs.openwakeword)
     implementation(libs.onnxruntime)
 
-    // Coroutines
+    // Coroutines + Serialization
     implementation(libs.kotlinx.coroutines)
+    implementation(libs.kotlinx.serialization.json)
 
     // Spotify App Remote SDK (AAR local — see libs/ folder)
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar"))))
