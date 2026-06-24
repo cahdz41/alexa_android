@@ -1,12 +1,16 @@
 package com.cahdz.alexa
 
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.IBinder
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -16,6 +20,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
+import com.cahdz.alexa.debug.DebugLogStore
 import com.cahdz.alexa.service.WakeWordService
 import com.cahdz.alexa.service.WakeWordService.AssistantState
 import com.cahdz.alexa.ui.AssistantScreen
@@ -59,10 +64,23 @@ class MainActivity : ComponentActivity() {
                 } else {
                     fallbackState.collectAsState()
                 }
+                val wakeWordThreshold by if (bound) {
+                    service!!.wakeWordThreshold.collectAsState()
+                } else {
+                    MutableStateFlow(0.50f).collectAsState()
+                }
+                val debugLogs by DebugLogStore.entries.collectAsState()
 
                 AssistantScreen(
                     state = state,
+                    wakeWordThreshold = wakeWordThreshold,
+                    debugLogs = debugLogs,
                     onToggleListening = { toggleListening() },
+                    onWakeWordThresholdChange = { threshold ->
+                        service?.setWakeWordThreshold(threshold)
+                    },
+                    onClearDebugLogs = { DebugLogStore.clear() },
+                    onCopyDebugLogs = { copyDebugLogs() },
                 )
             }
         }
@@ -123,5 +141,17 @@ class MainActivity : ComponentActivity() {
             permissions.add(Manifest.permission.POST_NOTIFICATIONS)
         }
         permissionLauncher.launch(permissions.toTypedArray())
+    }
+
+    private fun copyDebugLogs() {
+        val text = DebugLogStore.textSnapshot()
+        if (text.isBlank()) {
+            Toast.makeText(this, "No hay logs para copiar", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("Alexa diagnostic logs", text))
+        Toast.makeText(this, "Logs copiados", Toast.LENGTH_SHORT).show()
     }
 }

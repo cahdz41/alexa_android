@@ -1,9 +1,28 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.google.services)
+}
+
+val localProperties = Properties().apply {
+    val localPropertiesFile = rootProject.file("local.properties")
+    if (localPropertiesFile.exists()) {
+        localPropertiesFile.inputStream().use { load(it) }
+    }
+}
+
+fun projectProperty(name: String, defaultValue: String = ""): String {
+    return localProperties.getProperty(name)
+        ?: providers.gradleProperty(name).orNull
+        ?: defaultValue
+}
+
+fun String.asBuildConfigString(): String {
+    return replace("\\", "\\\\").replace("\"", "\\\"")
 }
 
 android {
@@ -18,6 +37,13 @@ android {
         versionName = "1.0.0"
 
         buildConfigField("String", "GEMINI_MODEL", "\"gemini-3.1-flash-live-preview\"")
+        buildConfigField("String", "SPOTIFY_CLIENT_ID", "\"${projectProperty("SPOTIFY_CLIENT_ID").asBuildConfigString()}\"")
+        buildConfigField("String", "SPOTIFY_CLIENT_SECRET", "\"${projectProperty("SPOTIFY_CLIENT_SECRET").asBuildConfigString()}\"")
+        buildConfigField(
+            "String",
+            "SPOTIFY_REDIRECT_URI",
+            "\"${projectProperty("SPOTIFY_REDIRECT_URI", "com.cahdz.alexa://spotify-auth").asBuildConfigString()}\"",
+        )
     }
 
     buildTypes {

@@ -9,6 +9,7 @@ import android.media.MediaRecorder
 import android.media.audiofx.AcousticEchoCanceler
 import android.util.Log
 import com.cahdz.alexa.BuildConfig
+import com.cahdz.alexa.debug.DebugLogStore
 import com.cahdz.alexa.tools.ToolRegistry
 import com.google.firebase.Firebase
 import com.google.firebase.ai.ai
@@ -33,6 +34,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -42,12 +44,13 @@ class GeminiLiveSession(
     private val onSessionEvent: (SessionEvent) -> Unit = {},
 ) {
 
-    enum class SessionEvent { MIC_ACTIVE, GEMINI_SPEAKING, IDLE }
+    enum class SessionEvent { MIC_ACTIVE, USER_SPEAKING, THINKING, GEMINI_SPEAKING, IDLE }
 
     private val toolRegistry = ToolRegistry(context)
 
     @Volatile private var running = false
     @Volatile private var modelSpeaking = false
+    @Volatile private var closeRequested = false
 
     private var session: com.google.firebase.ai.type.LiveSession? = null
     private var audioRecord: AudioRecord? = null
@@ -60,6 +63,9 @@ class GeminiLiveSession(
     private var sessionStartMs = 0L
     private var userHasSpoken = false
     private var unmuteAtMs = 0L
+    private var forceCloseAtMs = 0L
+    private var userSpeaking = false
+    private var lastVoiceEventMs = 0L
 
     suspend fun run() {
         running = true
@@ -82,9 +88,9 @@ class GeminiLiveSession(
             )
 
         try {
-            Log.i(TAG, "Connecting to Gemini Live...")
+            DebugLogStore.i(TAG, "Connecting to Gemini Live...")
             session = liveModel.connect()
-            Log.i(TAG, "Connected! Starting manual audio session...")
+            DebugLogStore.i(TAG, "Connected! Starting manual audio session...")
 
             initAudio()
             onSessionEvent(SessionEvent.MIC_ACTIVE)
@@ -111,16 +117,18 @@ class GeminiLiveSession(
                 coroutineContext.cancelChildren()
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Session error: ${e.javaClass.simpleName}: ${e.message}", e)
+            DebugLogStore.e(TAG, "Session error: ${e.javaClass.simpleName}: ${e.message}", e)
         } finally {
             running = false
             releaseAudio()
             withContext(NonCancellable) {
-                try { session?.close() } catch (_: Exception) {}
+                withTimeoutOrNull(1_500L) {
+                    try { session?.close() } catch (_: Exception) {}
+                }
             }
             session = null
             onSessionEvent(SessionEvent.IDLE)
-            Log.i(TAG, "Gemini session closed")
+            DebugLogStore.i(TAG, "Gemini session closed")
         }
     }
 
@@ -178,6 +186,14 @@ class GeminiLiveSession(
     private fun isMuted(): Boolean =
         modelSpeaking || System.currentTimeMillis() < unmuteAtMs
 
+    private fun requestClose(reason: String) {
+        if (closeRequested) return
+        closeRequested = true
+        running = false
+        DebugLogStore.i(TAG, "$reason - closing session")
+        sessionDone.complete(Unit)
+    }
+
     private suspend fun sendAudioLoop() {
         val buffer = ByteArray(CHUNK_BYTES)
         val record = audioRecord ?: return
@@ -189,7 +205,35 @@ class GeminiLiveSession(
             if (isMuted()) continue
 
             val chunk = buffer.copyOf(read)
+            updateVoiceActivity(chunk)
             sess.sendAudioRealtime(InlineData(chunk, AUDIO_MIME))
+        }
+    }
+
+    private fun updateVoiceActivity(chunk: ByteArray) {
+        var sum = 0.0
+        var samples = 0
+        var i = 0
+        while (i + 1 < chunk.size) {
+            val sample = ((chunk[i + 1].toInt() shl 8) or (chunk[i].toInt() and 0xff)).toShort()
+            val normalized = sample / 32768.0
+            sum += normalized * normalized
+            samples++
+            i += 2
+        }
+        if (samples == 0) return
+
+        val now = System.currentTimeMillis()
+        val rms = kotlin.math.sqrt(sum / samples)
+        if (rms >= USER_VOICE_RMS_THRESHOLD) {
+            lastVoiceEventMs = now
+            if (!userSpeaking) {
+                userSpeaking = true
+                onSessionEvent(SessionEvent.USER_SPEAKING)
+            }
+        } else if (userSpeaking && now - lastVoiceEventMs > USER_VOICE_HOLD_MS) {
+            userSpeaking = false
+            onSessionEvent(SessionEvent.MIC_ACTIVE)
         }
     }
 
@@ -203,14 +247,14 @@ class GeminiLiveSession(
                 is LiveServerContent -> handleContent(msg)
                 is LiveServerToolCall -> handleFunctionCalls(sess, msg.functionCalls)
                 is LiveServerGoAway -> {
-                    Log.w(TAG, "Server go_away — closing")
+                    DebugLogStore.w(TAG, "Server go_away - closing")
                     running = false
                     sessionDone.complete(Unit)
                 }
                 else -> {}
             }
         }
-        Log.i(TAG, "Receive stream ended")
+        DebugLogStore.i(TAG, "Receive stream ended")
     }
 
     private fun handleContent(msg: LiveServerContent) {
@@ -226,11 +270,11 @@ class GeminiLiveSession(
         msg.inputTranscription?.text?.trim()?.takeIf { it.isNotEmpty() }?.let {
             lastActivityMs = System.currentTimeMillis()
             userHasSpoken = true
-            Log.i(TAG, "[User] $it")
+            DebugLogStore.i(TAG, "[User] $it")
         }
 
         msg.outputTranscription?.text?.trim()?.takeIf { it.isNotEmpty() }?.let {
-            Log.i(TAG, "[Gemini] $it")
+            DebugLogStore.i(TAG, "[Gemini] $it")
         }
 
         if (msg.turnComplete || msg.generationComplete) {
@@ -239,7 +283,7 @@ class GeminiLiveSession(
             unmuteAtMs = now + ECHO_TAIL_MS
             lastActivityMs = now + ECHO_TAIL_MS
             onSessionEvent(SessionEvent.MIC_ACTIVE)
-            Log.i(TAG, "Turn complete — listening")
+            DebugLogStore.i(TAG, "Turn complete - listening")
         }
 
         if (msg.interrupted) {
@@ -247,7 +291,7 @@ class GeminiLiveSession(
             unmuteAtMs = System.currentTimeMillis() + ECHO_TAIL_MS
             audioTrack?.flush()
             onSessionEvent(SessionEvent.MIC_ACTIVE)
-            Log.i(TAG, "Barge-in — cleared audio")
+            DebugLogStore.i(TAG, "Barge-in - cleared audio")
         }
     }
 
@@ -256,9 +300,17 @@ class GeminiLiveSession(
         calls: List<FunctionCallPart>,
     ) {
         lastActivityMs = System.currentTimeMillis()
+        val shouldCloseAfterSpotify = calls.any { it.name in SPOTIFY_CLOSE_TOOLS }
+        if (shouldCloseAfterSpotify) {
+            forceCloseAtMs = System.currentTimeMillis() + PLAYBACK_TOOL_CLOSE_DELAY_MS
+            onSessionEvent(SessionEvent.THINKING)
+            DebugLogStore.i(TAG, "Spotify command requested - session will close after tool response")
+        } else {
+            onSessionEvent(SessionEvent.THINKING)
+        }
 
         val responses = calls.map { call ->
-            Log.i(TAG, "Tool call: ${call.name}(${call.args})")
+            DebugLogStore.i(TAG, "Tool call: ${call.name}(${call.args})")
 
             val result = try {
                 val args = call.args.mapValues { (_, v) ->
@@ -266,11 +318,11 @@ class GeminiLiveSession(
                 }
                 toolRegistry.handleCall(call.name, args)
             } catch (e: Exception) {
-                Log.e(TAG, "Tool ${call.name} failed", e)
+                DebugLogStore.e(TAG, "Tool ${call.name} failed", e)
                 "Error: ${e.message}"
             }
 
-            Log.i(TAG, "Tool result: $result")
+            DebugLogStore.i(TAG, "Tool result: $result")
 
             FunctionResponsePart(
                 call.name,
@@ -279,10 +331,27 @@ class GeminiLiveSession(
         }
 
         lastActivityMs = System.currentTimeMillis()
-        try {
-            sess.sendFunctionResponse(responses)
-        } catch (e: Exception) {
-            Log.e(TAG, "sendFunctionResponse failed", e)
+        if (shouldCloseAfterSpotify) {
+            try {
+                val sent = withTimeoutOrNull(SEND_TOOL_RESPONSE_TIMEOUT_MS) {
+                    sess.sendFunctionResponse(responses)
+                    true
+                } == true
+                if (!sent) {
+                    DebugLogStore.w(TAG, "Spotify tool response timed out")
+                }
+            } catch (e: Exception) {
+                DebugLogStore.e(TAG, "sendFunctionResponse failed", e)
+            } finally {
+                delay(PLAYBACK_TOOL_CLOSE_DELAY_MS)
+                requestClose("Spotify command completed")
+            }
+        } else {
+            try {
+                sess.sendFunctionResponse(responses)
+            } catch (e: Exception) {
+                DebugLogStore.e(TAG, "sendFunctionResponse failed", e)
+            }
         }
     }
 
@@ -292,13 +361,18 @@ class GeminiLiveSession(
             val now = System.currentTimeMillis()
 
             if (now - sessionStartMs >= MAX_SESSION_MS) {
-                Log.i(TAG, "Max session duration reached — closing")
+                DebugLogStore.i(TAG, "Max session duration reached - closing")
+                return
+            }
+
+            if (forceCloseAtMs > 0L && now >= forceCloseAtMs) {
+                requestClose("Spotify close delay reached")
                 return
             }
 
             if (modelSpeaking) {
                 if (now - lastModelAudioMs > MODEL_SPEAK_TIMEOUT_MS) {
-                    Log.w(TAG, "Model speaking stuck (${(now - lastModelAudioMs) / 1000}s without audio) — forcing idle")
+                    DebugLogStore.w(TAG, "Model speaking stuck (${(now - lastModelAudioMs) / 1000}s without audio) - forcing idle")
                     modelSpeaking = false
                     lastActivityMs = now
                 }
@@ -307,15 +381,16 @@ class GeminiLiveSession(
 
             val timeout = if (userHasSpoken) IDLE_TIMEOUT_MS else INITIAL_TIMEOUT_MS
             if (now - lastActivityMs >= timeout) {
-                Log.i(TAG, "Idle timeout (${(now - lastActivityMs) / 1000}s) — closing")
+                requestClose("Idle timeout (${(now - lastActivityMs) / 1000}s)")
+                return
+                DebugLogStore.i(TAG, "Idle timeout (${(now - lastActivityMs) / 1000}s) - closing")
                 return
             }
         }
     }
 
     fun stop() {
-        running = false
-        sessionDone.complete(Unit)
+        requestClose("Manual stop")
     }
 
     companion object {
@@ -334,6 +409,18 @@ class GeminiLiveSession(
         private const val MAX_SESSION_MS = 300_000L
         private const val ECHO_TAIL_MS = 300L
         private const val MODEL_SPEAK_TIMEOUT_MS = 5_000L
+        private const val PLAYBACK_TOOL_CLOSE_DELAY_MS = 1_500L
+        private const val SEND_TOOL_RESPONSE_TIMEOUT_MS = 2_000L
+        private const val USER_VOICE_RMS_THRESHOLD = 0.05
+        private const val USER_VOICE_HOLD_MS = 450L
+        private val SPOTIFY_CLOSE_TOOLS = setOf(
+            "play_spotify",
+            "pause_spotify",
+            "resume_spotify",
+            "next_track",
+            "previous_track",
+            "set_volume",
+        )
 
         private const val SYSTEM_PROMPT = """Eres Alexa, asistente de voz personal en un teléfono Android.
 Hablas español mexicano, relajado y amigable — como un cuate que sabe de todo.
